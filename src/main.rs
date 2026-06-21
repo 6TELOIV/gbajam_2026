@@ -19,5 +19,5 @@ extern crate alloc;
 // the #[agb::entry] macro.
 #[agb::entry]
 fn main(gba: agb::Gba) -> ! {
-    agb::no_game(gba);
+    gbajam_2026::main(gba);
 }
