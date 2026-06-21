@@ -18,15 +18,15 @@
             "MIMode": "gdb",
             "miDebuggerServerAddress": "localhost:2345",
             "preLaunchTask": "Rust build: debug",
-            // `agb_template` is the name of the crate, change it here if you change the name of the crate
-            "program": "${workspaceFolder}/target/thumbv4t-none-eabi/debug/agb_template",
+            // `gbajam_2026` is the name of the crate, change it here if you change the name of the crate
+            "program": "${workspaceFolder}/target/thumbv4t-none-eabi/debug/gbajam_2026",
             "cwd": "${workspaceFolder}",
             "linux": {
                 "miDebuggerPath": "arm-none-eabi-gdb",
                 "setupCommands": [
                     {
-                        // `agb_template` is the name of the crate, change it here if you change the name of the crate
-                        "text": "shell \"mgba-qt\" -g \"${workspaceFolder}/target/thumbv4t-none-eabi/debug/agb_template\" &"
+                        // `gbajam_2026` is the name of the crate, change it here if you change the name of the crate
+                        "text": "shell \"mgba-qt\" -g \"${workspaceFolder}/target/thumbv4t-none-eabi/debug/gbajam_2026\" &"
                     }
                 ]
             },

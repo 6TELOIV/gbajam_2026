@@ -104,13 +104,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agb_template"
-version = "0.1.0"
-dependencies = [
- "agb",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -294,6 +287,13 @@ checksum = "2e57e16b3fe8ff4364c0661fdaac543fb38b29ea9bc9c2f45612d90adf931d2b"
 dependencies = [
  "hashbrown",
  "ttf-parser",
+]
+
+[[package]]
+name = "gbajam_2026"
+version = "0.1.0"
+dependencies = [
+ "agb",
 ]
 
 [[package]]
