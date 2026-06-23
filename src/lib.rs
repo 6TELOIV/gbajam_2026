@@ -11,12 +11,8 @@
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
 #![cfg_attr(test, test_runner(agb::test_runner::test_runner))]
-#![feature(const_destruct)]
 
-use core::{
-    cmp::{max, min},
-    marker::Destruct,
-};
+use core::cmp::{max, min};
 
 use agb::{
     display::{
@@ -55,9 +51,9 @@ const SHROOM_WALK_SPRITES: &'static [usize] = &[0, 1, 0, 2];
 /// Given an input, a min, and a max, clamps the input between the two values (inclusive)
 fn clamp<T>(value: T, min_value: T, max_value: T) -> T
 where
-    T: Ord + Destruct,
+    T: Ord,
 {
-    return min(max_value, max(min_value, value));
+    min(max_value, max(min_value, value))
 }
 
 /// Draws a group of tiles from a background tile set
@@ -101,26 +97,11 @@ fn blank_tiles(
     }
 }
 
-// Manages the tile battlefield state and display of said state
-#[derive(Copy, Clone)]
-enum BuildingType {
-    Grass = 0,
-    Mountain = 1,
-    Archer = 2,
-    Canon = 3,
-}
-
+// Constants and helpers for dealing with coordinates on the battlefield
 const BATTLEFIELD_WIDTH: usize = 14;
 const BATTLEFIELD_HEIGHT: usize = 9;
 const BATTLEFIELD_X_OFFSET: i32 = 0;
 const BATTLEFIELD_Y_OFFSET: i32 = 1;
-
-pub struct Battlefield {
-    battlefield: RegularBackground,
-    cursor: Object,
-    buildings: [[BuildingType; BATTLEFIELD_HEIGHT]; BATTLEFIELD_WIDTH],
-    cursor_pos: Vector2D<usize>,
-}
 
 fn battlefield_pos_to_offset_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
     (
@@ -138,20 +119,68 @@ fn battlefield_pos_to_screen_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
     battlefield_pos_to_offset_pos(pos) * 16
 }
 
-impl Battlefield {
+fn clamp_to_battlefield_pos(pos: Vector2D<i32>) -> Vector2D<usize> {
+    (
+        clamp(pos.x, 0, BATTLEFIELD_WIDTH as i32 - 1) as usize,
+        clamp(pos.y, 0, BATTLEFIELD_HEIGHT as i32 - 1) as usize,
+    )
+        .into()
+}
+
+struct Cursor {
+    object: Object,
+    pos: Vector2D<usize>,
+}
+
+impl Cursor {
     fn new() -> Self {
-        let mut cursor = Object::new(sprites::CURSOR.sprite(0));
-        let cursor_pos = (0usize, 0usize).into();
-        let mut battlefield = RegularBackground::new(
+        let mut object = Object::new(sprites::CURSOR.sprite(0));
+        let pos = (0usize, 0usize).into();
+        // initialize the cursor at the right position
+        object.set_pos(battlefield_pos_to_screen_pos(pos));
+        Self { object, pos }
+    }
+    fn pos(&self) -> Vector2D<usize> {
+        self.pos
+    }
+    fn set_pos(&mut self, pos: Vector2D<usize>) {
+        self.pos = pos;
+        self.object.set_pos(battlefield_pos_to_screen_pos(pos));
+    }
+    fn show(&mut self, frame: &mut GraphicsFrame, frame_count: usize) {
+        self.object
+            .set_sprite(sprites::CURSOR.animation_sprite(frame_count / 32));
+        self.object.show(frame);
+    }
+}
+
+#[derive(Copy, Clone)]
+enum BuildingType {
+    Grass = 0,
+    Mountain = 1,
+    Archer = 2,
+    Canon = 3,
+}
+
+pub struct Buildings {
+    background: RegularBackground,
+    buildings: [[BuildingType; BATTLEFIELD_HEIGHT]; BATTLEFIELD_WIDTH],
+}
+
+impl Buildings {
+    fn new() -> Self {
+        let mut background = RegularBackground::new(
             Priority::P3,
             RegularBackgroundSize::Background32x32,
             TileFormat::FourBpp,
         );
+        let buildings = [[BuildingType::Grass; BATTLEFIELD_HEIGHT]; BATTLEFIELD_WIDTH];
+
         // initialzie the battlefield background with grass
         for x in 0..BATTLEFIELD_WIDTH {
             for y in 0..BATTLEFIELD_HEIGHT {
                 set_tiles(
-                    &mut battlefield,
+                    &mut background,
                     battlefield_pos_to_tile_pos((x, y).into()),
                     &backgrounds::BATTLEFIELD_BUILDINGS,
                     BuildingType::Grass as usize,
@@ -160,31 +189,18 @@ impl Battlefield {
                 );
             }
         }
-        // initialize the cursor at the right position
-        cursor.set_pos(battlefield_pos_to_screen_pos(cursor_pos));
         Self {
-            battlefield,
-            cursor,
-            buildings: [[BuildingType::Grass; BATTLEFIELD_HEIGHT]; BATTLEFIELD_WIDTH],
-            cursor_pos,
+            background,
+            buildings,
         }
     }
-    fn cursor_pos(&self) -> Vector2D<usize> {
-        self.cursor_pos
-    }
-    fn set_cursor_pos(&mut self, pos: Vector2D<i32>) {
-        self.cursor_pos = (
-            clamp(pos.x, 0, BATTLEFIELD_WIDTH as i32 - 1) as usize,
-            clamp(pos.y, 0, BATTLEFIELD_HEIGHT as i32 - 1) as usize,
-        )
-            .into();
-        self.cursor
-            .set_pos(battlefield_pos_to_screen_pos(self.cursor_pos));
+    fn get_building(&self, pos: Vector2D<usize>) -> BuildingType {
+        self.buildings[pos.x][pos.y]
     }
     fn set_building(&mut self, pos: Vector2D<usize>, building_type: BuildingType) {
         self.buildings[pos.x][pos.y] = building_type;
         set_tiles(
-            &mut self.battlefield,
+            &mut self.background,
             battlefield_pos_to_tile_pos(pos),
             &backgrounds::BATTLEFIELD_BUILDINGS,
             building_type as usize,
@@ -192,16 +208,8 @@ impl Battlefield {
             2,
         );
     }
-    fn show(&mut self, frame: &mut GraphicsFrame, frame_count: usize) -> &mut Self {
-        // draw the buildings
-        // place and animate the cursor
-        self.cursor
-            .set_sprite(sprites::CURSOR.animation_sprite(frame_count / 32));
-
-        // show them graphics!
-        self.cursor.show(frame);
-        self.battlefield.show(frame);
-        self
+    fn show(&mut self, frame: &mut GraphicsFrame) {
+        self.background.show(frame);
     }
 }
 
@@ -213,7 +221,8 @@ pub fn main(mut gba: agb::Gba) -> ! {
     gfx.set_background_palettes(backgrounds::PALETTES);
 
     // Make the battlefield
-    let mut battlefield = Battlefield::new();
+    let mut buildings = Buildings::new();
+    let mut cursor = Cursor::new();
 
     // Create objects with the sprites
     let mut shroom = Object::new(sprites::SHROOM.sprite(0));
@@ -237,13 +246,13 @@ pub fn main(mut gba: agb::Gba) -> ! {
         // move the cursor
         let pressed_vector = input.just_pressed_vector::<i32>();
         if pressed_vector.x != 0 || pressed_vector.y != 0 {
-            let cursor_pos = battlefield.cursor_pos();
-            battlefield
-                .set_cursor_pos(pressed_vector + (cursor_pos.x as i32, cursor_pos.y as i32).into());
+            cursor.set_pos(clamp_to_battlefield_pos(
+                pressed_vector + (cursor.pos().x as i32, cursor.pos().y as i32).into(),
+            ));
         }
 
         if input.is_just_pressed(A) {
-            battlefield.set_building(battlefield.cursor_pos(), BuildingType::Archer);
+            buildings.set_building(cursor.pos(), BuildingType::Archer);
         }
 
         // count the frames
@@ -252,8 +261,9 @@ pub fn main(mut gba: agb::Gba) -> ! {
         // Start a frame
         let mut frame = gfx.frame();
 
-        // Show the bg
-        battlefield.show(&mut frame, frame_count);
+        // Show the bgs
+        buildings.show(&mut frame);
+        cursor.show(&mut frame, frame_count);
 
         if frame_count % 8 == 0 {
             // Set the object sprites based on the frame count
