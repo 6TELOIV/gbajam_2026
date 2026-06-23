@@ -28,7 +28,8 @@
                         // `gbajam_2026` is the name of the crate, change it here if you change the name of the crate
                         "text": "shell \"mgba-qt\" -g \"${workspaceFolder}/target/thumbv4t-none-eabi/debug/gbajam_2026\" &"
                     }
-                ]
+                ],
+                "postDebugTask": "Kill mgba"
             },
         },
     ],

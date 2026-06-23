@@ -14,5 +14,12 @@
                 }
             }
         },
+        {
+            "label": "Kill mgba",
+            "command": "pkill",
+            "args": [
+                "mgba"
+            ]
+        }
     ],
 }
