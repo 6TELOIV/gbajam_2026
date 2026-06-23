@@ -46,8 +46,6 @@ include_background_gfx!(
     UI_BUTTONS => "gfx/backgrounds/ui/buttons.aseprite",
 );
 
-const SHROOM_WALK_SPRITES: &'static [usize] = &[0, 1, 0, 2];
-
 /// Given an input, a min, and a max, clamps the input between the two values (inclusive)
 fn clamp<T>(value: T, min_value: T, max_value: T) -> T
 where
@@ -102,6 +100,8 @@ const BATTLEFIELD_WIDTH: usize = 14;
 const BATTLEFIELD_HEIGHT: usize = 9;
 const BATTLEFIELD_X_OFFSET: i32 = 0;
 const BATTLEFIELD_Y_OFFSET: i32 = 1;
+
+type BattlefieldCoordinate = Vector2D<usize>;
 
 fn battlefield_pos_to_offset_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
     (
@@ -234,7 +234,6 @@ pub fn main(mut gba: agb::Gba) -> ! {
 
     // Count frames for animation timing
     let mut frame_count: usize = 0;
-    let mut shroom_animation_idx = 0;
 
     // Get inputs
     let mut input = ButtonController::new();
@@ -265,15 +264,12 @@ pub fn main(mut gba: agb::Gba) -> ! {
         buildings.show(&mut frame);
         cursor.show(&mut frame, frame_count);
 
-        if frame_count % 8 == 0 {
-            // Set the object sprites based on the frame count
-            shroom_animation_idx = (shroom_animation_idx + 1) % SHROOM_WALK_SPRITES.len();
-            shroom.set_sprite(sprites::SHROOM.sprite(SHROOM_WALK_SPRITES[shroom_animation_idx]));
-            shroom_fast
-                .set_sprite(sprites::SHROOM_FAST.sprite(SHROOM_WALK_SPRITES[shroom_animation_idx]));
-        }
+        // Animate the enemies
+        shroom.set_sprite(sprites::SHROOM.animation_sprite(frame_count / 4));
+        shroom_fast.set_sprite(sprites::SHROOM_FAST.animation_sprite(frame_count / 4));
 
-        if frame_count % 16 == 0 {
+        // Move them every 8 frames
+        if frame_count % 8 == 0 {
             // Move the objects
             shroom.set_pos(shroom.pos() + (1, 0).into());
             shroom_fast.set_pos(shroom_fast.pos() + (1, 0).into());
