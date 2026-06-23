@@ -11,8 +11,12 @@
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
 #![cfg_attr(test, test_runner(agb::test_runner::test_runner))]
+#![feature(const_destruct)]
 
-extern crate alloc;
+use core::{
+    cmp::{max, min},
+    marker::Destruct,
+};
 
 use agb::{
     display::{
@@ -21,10 +25,8 @@ use agb::{
         tiled::{TileFormat, TileSetting},
     },
     fixnum::Vector2D,
-    input::ButtonController,
+    input::{Button::A, ButtonController},
 };
-use alloc::vec;
-use alloc::vec::Vec;
 
 use agb::{
     display::{
@@ -36,25 +38,33 @@ use agb::{
 };
 
 include_aseprite!(
-    mod shrooms,
-    "gfx/sprites/shrooms.aseprite"
+    mod sprites,
+    "gfx/sprites/shrooms.aseprite",
+    "gfx/sprites/ui/cursor.aseprite"
 );
 
 include_background_gfx!(
     mod backgrounds,
     "412d3d",
     BATTLEFIELD_BUILDINGS => "gfx/backgrounds/battlefield/buildings.aseprite",
-    UI_CURSOR => "gfx/backgrounds/ui/cursor.aseprite",
     UI_BUTTONS => "gfx/backgrounds/ui/buttons.aseprite",
 );
 
 const SHROOM_WALK_SPRITES: &'static [usize] = &[0, 1, 0, 2];
 
+/// Given an input, a min, and a max, clamps the input between the two values (inclusive)
+fn clamp<T>(value: T, min_value: T, max_value: T) -> T
+where
+    T: Ord + Destruct,
+{
+    return min(max_value, max(min_value, value));
+}
+
 /// Draws a group of tiles from a background tile set
 /// Assumes that the imported aseprite image has logical groups of that size in a column
 fn set_tiles(
     background: &mut RegularBackground,
-    pos: impl Into<Vector2D<i32>> + Copy,
+    pos: Vector2D<i32>,
     tile_data: &TileData,
     tile_idx: usize,
     tile_width: usize,
@@ -63,8 +73,9 @@ fn set_tiles(
     let base_idx = tile_width * tile_height * tile_idx;
     for x in 0..tile_width {
         for y in 0..tile_height {
+            let pos = pos + (x as i32, y as i32).into();
             background.set_tile(
-                pos.into() + (x as i32, y as i32).into(),
+                pos,
                 &tile_data.tiles,
                 tile_data.tile_settings[base_idx + x + (y * tile_width)],
             );
@@ -99,71 +110,97 @@ enum BuildingType {
     Canon = 3,
 }
 
-pub struct Building {
-    building_type: BuildingType,
-    pos: Vector2D<i32>,
-}
+const BATTLEFIELD_WIDTH: usize = 14;
+const BATTLEFIELD_HEIGHT: usize = 9;
+const BATTLEFIELD_X_OFFSET: i32 = 0;
+const BATTLEFIELD_Y_OFFSET: i32 = 1;
 
 pub struct Battlefield {
-    buildings: Vec<Building>,
-    cursor_pos: Vector2D<i32>,
-    previous_cursor_pos: Vector2D<i32>,
+    battlefield: RegularBackground,
+    cursor: Object,
+    buildings: [[BuildingType; BATTLEFIELD_HEIGHT]; BATTLEFIELD_WIDTH],
+    cursor_pos: Vector2D<usize>,
+}
+
+fn battlefield_pos_to_offset_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
+    (
+        pos.x as i32 + BATTLEFIELD_X_OFFSET,
+        pos.y as i32 + BATTLEFIELD_Y_OFFSET,
+    )
+        .into()
+}
+
+fn battlefield_pos_to_tile_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
+    battlefield_pos_to_offset_pos(pos) * 2
+}
+
+fn battlefield_pos_to_screen_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
+    battlefield_pos_to_offset_pos(pos) * 16
 }
 
 impl Battlefield {
     fn new() -> Self {
+        let mut cursor = Object::new(sprites::CURSOR.sprite(0));
+        let cursor_pos = (0usize, 0usize).into();
+        let mut battlefield = RegularBackground::new(
+            Priority::P3,
+            RegularBackgroundSize::Background32x32,
+            TileFormat::FourBpp,
+        );
+        // initialzie the battlefield background with grass
+        for x in 0..BATTLEFIELD_WIDTH {
+            for y in 0..BATTLEFIELD_HEIGHT {
+                set_tiles(
+                    &mut battlefield,
+                    battlefield_pos_to_tile_pos((x, y).into()),
+                    &backgrounds::BATTLEFIELD_BUILDINGS,
+                    BuildingType::Grass as usize,
+                    2,
+                    2,
+                );
+            }
+        }
+        // initialize the cursor at the right position
+        cursor.set_pos(battlefield_pos_to_screen_pos(cursor_pos));
         Self {
-            buildings: vec![Building {
-                building_type: BuildingType::Mountain,
-                pos: (0, 0).into(),
-            }],
-            cursor_pos: (2, 2).into(),
-            previous_cursor_pos: (64, 64).into(),
+            battlefield,
+            cursor,
+            buildings: [[BuildingType::Grass; BATTLEFIELD_HEIGHT]; BATTLEFIELD_WIDTH],
+            cursor_pos,
         }
     }
-    fn cursor_pos(&self) -> Vector2D<i32> {
+    fn cursor_pos(&self) -> Vector2D<usize> {
         self.cursor_pos
     }
     fn set_cursor_pos(&mut self, pos: Vector2D<i32>) {
-        self.previous_cursor_pos = self.cursor_pos;
-        self.cursor_pos = pos;
+        self.cursor_pos = (
+            clamp(pos.x, 0, BATTLEFIELD_WIDTH as i32 - 1) as usize,
+            clamp(pos.y, 0, BATTLEFIELD_HEIGHT as i32 - 1) as usize,
+        )
+            .into();
+        self.cursor
+            .set_pos(battlefield_pos_to_screen_pos(self.cursor_pos));
     }
-    fn show(
-        &mut self,
-        frame: &mut GraphicsFrame,
-        frame_count: usize,
-        battlefield_background: &mut RegularBackground,
-        ui_background: &mut RegularBackground,
-    ) -> &mut Self {
-        for building in &self.buildings {
-            set_tiles(
-                battlefield_background,
-                building.pos * 2,
-                &backgrounds::BATTLEFIELD_BUILDINGS,
-                building.building_type as usize,
-                2,
-                2,
-            );
-        }
-        if self.previous_cursor_pos != self.cursor_pos {
-            blank_tiles(
-                ui_background,
-                self.previous_cursor_pos * 2,
-                &backgrounds::UI_CURSOR,
-                2,
-                2,
-            );
-            set_tiles(
-                ui_background,
-                self.cursor_pos * 2,
-                &backgrounds::UI_CURSOR,
-                frame_count / 32,
-                2,
-                2,
-            );
-        }
-        battlefield_background.show(frame);
-        ui_background.show(frame);
+    fn set_building(&mut self, pos: Vector2D<usize>, building_type: BuildingType) {
+        self.buildings[pos.x][pos.y] = building_type;
+        set_tiles(
+            &mut self.battlefield,
+            battlefield_pos_to_tile_pos(pos),
+            &backgrounds::BATTLEFIELD_BUILDINGS,
+            building_type as usize,
+            2,
+            2,
+        );
+    }
+    fn show(&mut self, frame: &mut GraphicsFrame, frame_count: usize) -> &mut Self {
+        // draw the buildings
+        // place and animate the cursor
+        self.cursor
+            .set_sprite(sprites::CURSOR.animation_sprite(frame_count / 32));
+
+        // show them graphics!
+        self.cursor.show(frame);
+        self.battlefield.show(frame);
         self
     }
 }
@@ -175,25 +212,12 @@ pub fn main(mut gba: agb::Gba) -> ! {
     // Set the palettes to the import, otherwise nothing will show (all 0 palette)
     gfx.set_background_palettes(backgrounds::PALETTES);
 
-    // Make the backgrounds we'll need
-    let mut battlefield_background = RegularBackground::new(
-        Priority::P3,
-        RegularBackgroundSize::Background32x32,
-        TileFormat::FourBpp,
-    );
-    // Make the backgrounds we'll need
-    let mut ui_background = RegularBackground::new(
-        Priority::P0,
-        RegularBackgroundSize::Background32x32,
-        TileFormat::FourBpp,
-    );
-
     // Make the battlefield
     let mut battlefield = Battlefield::new();
 
-    // Create an objects with the sprites
-    let mut shroom = Object::new(shrooms::SHROOM.sprite(0));
-    let mut shroom_fast = Object::new(shrooms::SHROOM_FAST.sprite(0));
+    // Create objects with the sprites
+    let mut shroom = Object::new(sprites::SHROOM.sprite(0));
+    let mut shroom_fast = Object::new(sprites::SHROOM_FAST.sprite(0));
 
     // Place them at some points on the screen
     shroom.set_pos((48, 48));
@@ -211,30 +235,32 @@ pub fn main(mut gba: agb::Gba) -> ! {
         input.update();
 
         // move the cursor
-        if input.just_pressed_vector::<i32>() != (0, 0).into() {
-            battlefield.set_cursor_pos(battlefield.cursor_pos() + input.just_pressed_vector());
+        let pressed_vector = input.just_pressed_vector::<i32>();
+        if pressed_vector.x != 0 || pressed_vector.y != 0 {
+            let cursor_pos = battlefield.cursor_pos();
+            battlefield
+                .set_cursor_pos(pressed_vector + (cursor_pos.x as i32, cursor_pos.y as i32).into());
+        }
+
+        if input.is_just_pressed(A) {
+            battlefield.set_building(battlefield.cursor_pos(), BuildingType::Archer);
         }
 
         // count the frames
-        frame_count = (frame_count + 1) % 64;
+        frame_count += 1;
 
         // Start a frame
         let mut frame = gfx.frame();
 
         // Show the bg
-        battlefield.show(
-            &mut frame,
-            frame_count,
-            &mut battlefield_background,
-            &mut ui_background,
-        );
+        battlefield.show(&mut frame, frame_count);
 
         if frame_count % 8 == 0 {
             // Set the object sprites based on the frame count
             shroom_animation_idx = (shroom_animation_idx + 1) % SHROOM_WALK_SPRITES.len();
-            shroom.set_sprite(shrooms::SHROOM.sprite(SHROOM_WALK_SPRITES[shroom_animation_idx]));
+            shroom.set_sprite(sprites::SHROOM.sprite(SHROOM_WALK_SPRITES[shroom_animation_idx]));
             shroom_fast
-                .set_sprite(shrooms::SHROOM_FAST.sprite(SHROOM_WALK_SPRITES[shroom_animation_idx]));
+                .set_sprite(sprites::SHROOM_FAST.sprite(SHROOM_WALK_SPRITES[shroom_animation_idx]));
         }
 
         if frame_count % 16 == 0 {
