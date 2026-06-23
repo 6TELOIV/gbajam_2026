@@ -18,9 +18,10 @@ use agb::{
     display::{
         GraphicsFrame,
         tile_data::TileData,
-        tiled::{TileSetting},
+        tiled::{TileFormat, TileSetting},
     },
-    fixnum::Vector2D, input::ButtonController,
+    fixnum::Vector2D,
+    input::ButtonController,
 };
 use alloc::vec;
 use alloc::vec::Vec;
@@ -36,85 +37,66 @@ use agb::{
 
 include_aseprite!(
     mod shrooms,
-    "gfx/shrooms.aseprite"
+    "gfx/sprites/shrooms.aseprite"
 );
 
 include_background_gfx!(
     mod backgrounds,
     "412d3d",
-    BATTLEFIELD => "gfx/battlefield.aseprite",
-    BATTLEFIELD_UI => "gfx/battlefield_ui.aseprite",
+    BATTLEFIELD_BUILDINGS => "gfx/backgrounds/battlefield/buildings.aseprite",
+    UI_CURSOR => "gfx/backgrounds/ui/cursor.aseprite",
+    UI_BUTTONS => "gfx/backgrounds/ui/buttons.aseprite",
 );
 
 const SHROOM_WALK_SPRITES: &'static [usize] = &[0, 1, 0, 2];
 
-/// Helper function to draw a 16x16 meta tile to a position based on a 16x16 grid
-fn set_meta_tile(
+/// Draws a group of tiles from a background tile set
+/// Assumes that the imported aseprite image has logical groups of that size in a column
+fn set_tiles(
     background: &mut RegularBackground,
-    pos: impl Into<Vector2D<i32>>,
+    pos: impl Into<Vector2D<i32>> + Copy,
     tile_data: &TileData,
-    meta_tile_idx: usize,
-) -> () {
-    let base_pos = pos.into() * 2;
-    let base_tile_settings_idx = meta_tile_idx * 2;
-    let row_two_offset = tile_data.tile_settings.len() / 2;
-    background.set_tile(
-        base_pos,
-        &tile_data.tiles,
-        tile_data.tile_settings[base_tile_settings_idx],
-    );
-    background.set_tile(
-        base_pos + (1, 0).into(),
-        &tile_data.tiles,
-        tile_data.tile_settings[base_tile_settings_idx + 1],
-    );
-    background.set_tile(
-        base_pos + (0, 1).into(),
-        &tile_data.tiles,
-        tile_data.tile_settings[base_tile_settings_idx + row_two_offset],
-    );
-    background.set_tile(
-        base_pos + (1, 1).into(),
-        &tile_data.tiles,
-        tile_data.tile_settings[base_tile_settings_idx + 1 + row_two_offset],
-    );
+    tile_idx: usize,
+    tile_width: usize,
+    tile_height: usize,
+) {
+    let base_idx = tile_width * tile_height * tile_idx;
+    for x in 0..tile_width {
+        for y in 0..tile_height {
+            background.set_tile(
+                pos.into() + (x as i32, y as i32).into(),
+                &tile_data.tiles,
+                tile_data.tile_settings[base_idx + x + (y * tile_width)],
+            );
+        }
+    }
 }
-/// helper function to empty a 16x16 meta tile to a position based on a 16x16 grid
-fn blank_meta_tile(
+/// Draws a group of blank tiles from a background tile set
+fn blank_tiles(
     background: &mut RegularBackground,
-    pos: impl Into<Vector2D<i32>>,
+    pos: impl Into<Vector2D<i32>> + Copy,
     tile_data: &TileData,
-) -> () {
-    let pos = pos.into() * 2;
-    background.set_tile(
-        pos,
-        &tile_data.tiles,
-        TileSetting::BLANK
-    );
-    background.set_tile(
-        pos + (1, 0).into(),
-        &tile_data.tiles,
-        TileSetting::BLANK
-    );
-    background.set_tile(
-        pos + (0, 1).into(),
-        &tile_data.tiles,
-        TileSetting::BLANK
-    );
-    background.set_tile(
-        pos + (1, 1).into(),
-        &tile_data.tiles,
-        TileSetting::BLANK
-    );
+    tile_width: usize,
+    tile_height: usize,
+) {
+    for x in 0..tile_width {
+        for y in 0..tile_height {
+            background.set_tile(
+                pos.into() + (x as i32, y as i32).into(),
+                &tile_data.tiles,
+                TileSetting::BLANK,
+            );
+        }
+    }
 }
 
 // Manages the tile battlefield state and display of said state
 #[derive(Copy, Clone)]
 enum BuildingType {
-    // Grass = 0,
+    Grass = 0,
     Mountain = 1,
-    // Archer = 2,
-    // Canon = 3,
+    Archer = 2,
+    Canon = 3,
 }
 
 pub struct Building {
@@ -133,10 +115,10 @@ impl Battlefield {
         Self {
             buildings: vec![Building {
                 building_type: BuildingType::Mountain,
-                pos: (2, 2).into(),
+                pos: (0, 0).into(),
             }],
-            cursor_pos: (2,2).into(),
-            previous_cursor_pos: (64,64).into(),
+            cursor_pos: (2, 2).into(),
+            previous_cursor_pos: (64, 64).into(),
         }
     }
     fn cursor_pos(&self) -> Vector2D<i32> {
@@ -154,16 +136,31 @@ impl Battlefield {
         ui_background: &mut RegularBackground,
     ) -> &mut Self {
         for building in &self.buildings {
-            set_meta_tile(
+            set_tiles(
                 battlefield_background,
-                building.pos,
-                &backgrounds::BATTLEFIELD,
+                building.pos * 2,
+                &backgrounds::BATTLEFIELD_BUILDINGS,
                 building.building_type as usize,
+                2,
+                2,
             );
         }
         if self.previous_cursor_pos != self.cursor_pos {
-            blank_meta_tile(ui_background, self.previous_cursor_pos, &backgrounds::BATTLEFIELD_UI);
-            set_meta_tile(ui_background, self.cursor_pos, &backgrounds::BATTLEFIELD_UI, frame_count / 32);
+            blank_tiles(
+                ui_background,
+                self.previous_cursor_pos * 2,
+                &backgrounds::UI_CURSOR,
+                2,
+                2,
+            );
+            set_tiles(
+                ui_background,
+                self.cursor_pos * 2,
+                &backgrounds::UI_CURSOR,
+                frame_count / 32,
+                2,
+                2,
+            );
         }
         battlefield_background.show(frame);
         ui_background.show(frame);
@@ -182,15 +179,15 @@ pub fn main(mut gba: agb::Gba) -> ! {
     let mut battlefield_background = RegularBackground::new(
         Priority::P3,
         RegularBackgroundSize::Background32x32,
-        backgrounds::BATTLEFIELD.tiles.format(),
+        TileFormat::FourBpp,
     );
     // Make the backgrounds we'll need
     let mut ui_background = RegularBackground::new(
         Priority::P0,
         RegularBackgroundSize::Background32x32,
-        backgrounds::BATTLEFIELD.tiles.format(),
+        TileFormat::FourBpp,
     );
-    
+
     // Make the battlefield
     let mut battlefield = Battlefield::new();
 
@@ -212,9 +209,9 @@ pub fn main(mut gba: agb::Gba) -> ! {
     loop {
         // get inputs
         input.update();
-        
+
         // move the cursor
-        if input.just_pressed_vector::<i32>() != (0,0).into() {
+        if input.just_pressed_vector::<i32>() != (0, 0).into() {
             battlefield.set_cursor_pos(battlefield.cursor_pos() + input.just_pressed_vector());
         }
 
@@ -225,7 +222,12 @@ pub fn main(mut gba: agb::Gba) -> ! {
         let mut frame = gfx.frame();
 
         // Show the bg
-        battlefield.show(&mut frame, frame_count, &mut battlefield_background, &mut ui_background);
+        battlefield.show(
+            &mut frame,
+            frame_count,
+            &mut battlefield_background,
+            &mut ui_background,
+        );
 
         if frame_count % 8 == 0 {
             // Set the object sprites based on the frame count
