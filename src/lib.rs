@@ -21,7 +21,10 @@ use agb::{
         tiled::{TileFormat, TileSetting},
     },
     fixnum::Vector2D,
-    input::{Button::A, ButtonController},
+    input::{
+        Button::{self, A},
+        ButtonController,
+    },
 };
 
 use agb::{
@@ -44,6 +47,7 @@ include_background_gfx!(
     "412d3d",
     BATTLEFIELD_BUILDINGS => "gfx/backgrounds/battlefield/buildings.aseprite",
     UI_BUTTONS => "gfx/backgrounds/ui/buttons.aseprite",
+    UI_PLAY_BUTTON => "gfx/backgrounds/ui/play_button.aseprite",
 );
 
 /// Given an input, a min, and a max, clamps the input between the two values (inclusive)
@@ -101,56 +105,122 @@ const BATTLEFIELD_HEIGHT: usize = 9;
 const BATTLEFIELD_X_OFFSET: i32 = 0;
 const BATTLEFIELD_Y_OFFSET: i32 = 1;
 
-type BattlefieldCoordinate = Vector2D<usize>;
+#[derive(Clone, Copy)]
+pub struct BattlefieldCoordinate(Vector2D<usize>);
 
-fn battlefield_pos_to_offset_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
-    (
-        pos.x as i32 + BATTLEFIELD_X_OFFSET,
-        pos.y as i32 + BATTLEFIELD_Y_OFFSET,
-    )
-        .into()
+impl BattlefieldCoordinate {
+    pub fn new(pos: impl Into<Vector2D<usize>>) -> Self {
+        Self(pos.into())
+    }
+    fn to_offset_pos(&self) -> Vector2D<i32> {
+        (
+            self.0.x as i32 + BATTLEFIELD_X_OFFSET,
+            self.0.y as i32 + BATTLEFIELD_Y_OFFSET,
+        )
+            .into()
+    }
+    pub fn to_tile_pos(&self) -> Vector2D<i32> {
+        self.to_offset_pos() * 2
+    }
+    pub fn to_screen_pos(&self) -> Vector2D<i32> {
+        self.to_offset_pos() * 16
+    }
+    /// doesn't modify the value; returns a new coordinate with the added value.
+    pub fn add_vector_clamped(&self, vector: Vector2D<i32>) -> Self {
+        (
+            clamp(self.0.x as i32 + vector.x, 0, BATTLEFIELD_WIDTH as i32 - 1) as usize,
+            clamp(self.0.y as i32 + vector.y, 0, BATTLEFIELD_HEIGHT as i32 - 1) as usize,
+        )
+            .into()
+    }
 }
 
-fn battlefield_pos_to_tile_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
-    battlefield_pos_to_offset_pos(pos) * 2
+impl From<(usize, usize)> for BattlefieldCoordinate {
+    fn from(pos: (usize, usize)) -> Self {
+        Self(pos.into())
+    }
 }
 
-fn battlefield_pos_to_screen_pos(pos: Vector2D<usize>) -> Vector2D<i32> {
-    battlefield_pos_to_offset_pos(pos) * 16
+const BUTTONS_LEN: usize = 3;
+const BUTTONS_SIZE: usize = BUTTONS_LEN * 2 * 8;
+
+#[derive(Clone, Copy)]
+enum CursorPosition {
+    Battlefield(BattlefieldCoordinate),
+    Buttons(usize),
 }
 
-fn clamp_to_battlefield_pos(pos: Vector2D<i32>) -> Vector2D<usize> {
-    (
-        clamp(pos.x, 0, BATTLEFIELD_WIDTH as i32 - 1) as usize,
-        clamp(pos.y, 0, BATTLEFIELD_HEIGHT as i32 - 1) as usize,
-    )
-        .into()
-}
-
-struct Cursor {
-    object: Object,
-    pos: Vector2D<usize>,
+pub struct Cursor {
+    object_left: Object,
+    object_right: Object,
+    pos: CursorPosition,
 }
 
 impl Cursor {
-    fn new() -> Self {
-        let mut object = Object::new(sprites::CURSOR.sprite(0));
-        let pos = (0usize, 0usize).into();
-        // initialize the cursor at the right position
-        object.set_pos(battlefield_pos_to_screen_pos(pos));
-        Self { object, pos }
+    pub fn new() -> Self {
+        let mut object_right = Object::new(sprites::CURSOR.sprite(0));
+        object_right.set_hflip(true);
+        Self {
+            object_left: Object::new(sprites::CURSOR.sprite(0)),
+            object_right,
+            pos: CursorPosition::Battlefield(BattlefieldCoordinate::new((0usize, 0usize))),
+        }
     }
-    fn pos(&self) -> Vector2D<usize> {
+    pub fn pos(&self) -> CursorPosition {
         self.pos
     }
-    fn set_pos(&mut self, pos: Vector2D<usize>) {
-        self.pos = pos;
-        self.object.set_pos(battlefield_pos_to_screen_pos(pos));
+    pub fn update(&mut self, input: &ButtonController) {
+        let pressed_vector: Vector2D<i32> = input.just_pressed_vector();
+        match self.pos {
+            CursorPosition::Battlefield(battlefield_pos) => {
+                if battlefield_pos.0.y == 0 && pressed_vector.y == -1 {
+                    // If we're at the top of the battlefield, jump into the buttons area
+                    self.pos = CursorPosition::Buttons(0);
+                } else {
+                    // Otherwise, move around the battlefield
+                    self.pos = CursorPosition::Battlefield(
+                        battlefield_pos.add_vector_clamped(pressed_vector),
+                    );
+                }
+            }
+            CursorPosition::Buttons(button_index) => {
+                if pressed_vector.y == 1 {
+                    // If the down arrow is pressed, go down to the battlefield.
+                    self.pos = CursorPosition::Battlefield((0, 0).into());
+                } else {
+                    // otherwise, move the button we're focused on
+                    self.pos = CursorPosition::Buttons(clamp(
+                        button_index as i32 + pressed_vector.x,
+                        0,
+                        BUTTONS_LEN as i32,
+                    ) as usize);
+                }
+            }
+        }
     }
-    fn show(&mut self, frame: &mut GraphicsFrame, frame_count: usize) {
-        self.object
-            .set_sprite(sprites::CURSOR.animation_sprite(frame_count / 32));
-        self.object.show(frame);
+    pub fn show(&mut self, frame: &mut GraphicsFrame, frame_count: usize) {
+        let sprite = sprites::CURSOR.animation_sprite(frame_count / 32);
+        match self.pos {
+            CursorPosition::Battlefield(battlefield_pos) => {
+                self.object_left.set_sprite(sprite);
+                self.object_right.set_sprite(sprite);
+                self.object_left.set_pos(battlefield_pos.to_screen_pos());
+                self.object_right
+                    .set_pos(battlefield_pos.to_screen_pos() + (8, 0).into());
+            }
+            CursorPosition::Buttons(button_index) => {
+                self.object_left
+                    .set_sprite(sprites::CURSOR.animation_sprite(frame_count / 32));
+                self.object_right
+                    .set_sprite(sprites::CURSOR.animation_sprite(frame_count / 32));
+                self.object_left
+                    .set_pos(((button_index * BUTTONS_SIZE) as i32, 0));
+                self.object_right
+                    .set_pos((((button_index + 1) * BUTTONS_SIZE - 8) as i32, 0));
+            }
+        }
+        self.object_left.show(frame);
+        self.object_right.show(frame);
     }
 }
 
@@ -181,7 +251,7 @@ impl Buildings {
             for y in 0..BATTLEFIELD_HEIGHT {
                 set_tiles(
                     &mut background,
-                    battlefield_pos_to_tile_pos((x, y).into()),
+                    BattlefieldCoordinate::new((x, y)).to_tile_pos(),
                     &backgrounds::BATTLEFIELD_BUILDINGS,
                     BuildingType::Grass as usize,
                     2,
@@ -194,14 +264,14 @@ impl Buildings {
             buildings,
         }
     }
-    fn get_building(&self, pos: Vector2D<usize>) -> BuildingType {
-        self.buildings[pos.x][pos.y]
+    fn get_building(&self, pos: BattlefieldCoordinate) -> BuildingType {
+        self.buildings[pos.0.x][pos.0.y]
     }
-    fn set_building(&mut self, pos: Vector2D<usize>, building_type: BuildingType) {
-        self.buildings[pos.x][pos.y] = building_type;
+    fn set_building(&mut self, pos: BattlefieldCoordinate, building_type: BuildingType) {
+        self.buildings[pos.0.x][pos.0.y] = building_type;
         set_tiles(
             &mut self.background,
-            battlefield_pos_to_tile_pos(pos),
+            pos.to_tile_pos(),
             &backgrounds::BATTLEFIELD_BUILDINGS,
             building_type as usize,
             2,
@@ -210,6 +280,21 @@ impl Buildings {
     }
     fn show(&mut self, frame: &mut GraphicsFrame) {
         self.background.show(frame);
+    }
+}
+
+pub struct UserInterface {
+    background: RegularBackground,
+}
+
+impl UserInterface {
+    pub fn new() -> Self {
+        let mut background = RegularBackground::new(
+            Priority::P3,
+            RegularBackgroundSize::Background32x32,
+            TileFormat::FourBpp,
+        );
+        Self { background }
     }
 }
 
@@ -224,14 +309,6 @@ pub fn main(mut gba: agb::Gba) -> ! {
     let mut buildings = Buildings::new();
     let mut cursor = Cursor::new();
 
-    // Create objects with the sprites
-    let mut shroom = Object::new(sprites::SHROOM.sprite(0));
-    let mut shroom_fast = Object::new(sprites::SHROOM_FAST.sprite(0));
-
-    // Place them at some points on the screen
-    shroom.set_pos((48, 48));
-    shroom_fast.set_pos((64, 64));
-
     // Count frames for animation timing
     let mut frame_count: usize = 0;
 
@@ -243,16 +320,7 @@ pub fn main(mut gba: agb::Gba) -> ! {
         input.update();
 
         // move the cursor
-        let pressed_vector = input.just_pressed_vector::<i32>();
-        if pressed_vector.x != 0 || pressed_vector.y != 0 {
-            cursor.set_pos(clamp_to_battlefield_pos(
-                pressed_vector + (cursor.pos().x as i32, cursor.pos().y as i32).into(),
-            ));
-        }
-
-        if input.is_just_pressed(A) {
-            buildings.set_building(cursor.pos(), BuildingType::Archer);
-        }
+        cursor.update(&input);
 
         // count the frames
         frame_count += 1;
@@ -263,21 +331,6 @@ pub fn main(mut gba: agb::Gba) -> ! {
         // Show the bgs
         buildings.show(&mut frame);
         cursor.show(&mut frame, frame_count);
-
-        // Animate the enemies
-        shroom.set_sprite(sprites::SHROOM.animation_sprite(frame_count / 4));
-        shroom_fast.set_sprite(sprites::SHROOM_FAST.animation_sprite(frame_count / 4));
-
-        // Move them every 8 frames
-        if frame_count % 8 == 0 {
-            // Move the objects
-            shroom.set_pos(shroom.pos() + (1, 0).into());
-            shroom_fast.set_pos(shroom_fast.pos() + (1, 0).into());
-        }
-
-        // Actually show these objects on the screen
-        shroom.show(&mut frame);
-        shroom_fast.show(&mut frame);
 
         // Until the call to `frame.commit()`, nothing will be displayed
         frame.commit();
