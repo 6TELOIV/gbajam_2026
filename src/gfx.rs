@@ -1,10 +1,9 @@
 use agb::{
     display::{
-        tile_data::TileData,
-        tiled::{RegularBackground, TileSetting},
-    },
-    fixnum::Vector2D,
+        tile_data::{self, TileData}, tiled::{RegularBackground, TileSetting},
+    }, fixnum::{Vector2D, vec2}, hash_map::Iter,
 };
+use alloc::vec::Vec;
 
 use crate::{BATTLEFIELD_TILE_SIZE, BattlefieldTileType, backgrounds};
 
@@ -50,6 +49,24 @@ fn blank_tiles(
     }
 }
 
+pub fn blank_background(
+    background: &mut RegularBackground,
+    tile_data: &TileData,
+) {
+    let size = match background.size() { 
+        agb::display::tiled::RegularBackgroundSize::Background32x32 => vec2(32, 32),
+        agb::display::tiled::RegularBackgroundSize::Background32x64 => vec2(32, 64),
+        agb::display::tiled::RegularBackgroundSize::Background64x32 => vec2(64, 32),
+        agb::display::tiled::RegularBackgroundSize::Background64x64 => vec2(64, 64),
+    };
+    for x in 0..size.x {
+        for y in 0..size.y {
+            background.set_tile((x, y), &tile_data.tiles, TileSetting::BLANK);
+        }
+    }
+}
+
+
 pub fn set_battlefield_tile(
     background: &mut RegularBackground,
     pos: Vector2D<i32>,
@@ -63,4 +80,25 @@ pub fn set_battlefield_tile(
         BATTLEFIELD_TILE_SIZE as usize,
         BATTLEFIELD_TILE_SIZE as usize,
     );
+}
+
+/// Draws the entire passed &TileData tiles at the given tile position.
+pub fn draw_single_tile_data(background: &mut RegularBackground, pos: Vector2D<i32>, tile_data: &TileData) {
+    for x in 0..tile_data.width {
+        for y in 0..tile_data.height {
+            background.set_tile(
+                pos + (x as i32, y as i32).into(),
+                &tile_data.tiles,
+                tile_data.tile_settings[x + (y * tile_data.width)],
+            );
+        }
+    }
+}
+
+pub fn draw_many_tile_data(background: &mut RegularBackground, pos: Vector2D<i32>, tile_data_vec: &Vec<&TileData>) {
+    let mut pos = pos;
+    for tile_data in tile_data_vec {
+        draw_single_tile_data(background, pos, tile_data);
+        pos.y += tile_data.height as i32;
+    }
 }

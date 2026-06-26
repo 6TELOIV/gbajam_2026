@@ -21,19 +21,12 @@ extern crate alloc;
 
 use agb::{
     display::{
-        self,
-        Priority::{P2, P3},
-        tiled::{RegularBackground, RegularBackgroundSize, TileFormat::FourBpp},
-    },
-    fixnum::{Rect, Vector2D, vec2},
-    include_aseprite, include_background_gfx,
-    input::{Button, ButtonController},
+        self, Blend, Priority::{P2, P3}, tiled::{RegularBackground, RegularBackgroundSize, TileFormat::FourBpp},
+    }, fixnum::{Num, Rect, Vector2D, vec2}, include_aseprite, include_background_gfx, input::{Button, ButtonController},
 };
+use alloc::vec;
 
-use crate::{
-    cursor::CursorHighlight,
-    math::{bound, clamp},
-};
+use crate::{cursor::CursorHighlight, gfx::{blank_background, draw_many_tile_data, set_battlefield_tile}, math::bound};
 
 // graphics includes
 include_aseprite!(
@@ -46,22 +39,35 @@ include_background_gfx!(
     mod backgrounds,
     "412d3d",
     BATTLEFIELD => "gfx/backgrounds/battlefield.aseprite",
-    MENU => "gfx/backgrounds/ui/menu.aseprite",
+    MENU_HEADER => "gfx/backgrounds/ui/menu/_header.aseprite",
+    MENU_FOOTER => "gfx/backgrounds/ui/menu/_footer.aseprite",
+    MENU_BUILD => "gfx/backgrounds/ui/menu/build.aseprite",
+    MENU_SELL => "gfx/backgrounds/ui/menu/sell.aseprite",
+    MENU_INFO => "gfx/backgrounds/ui/menu/info.aseprite",
     UI_PLAY_BUTTON => "gfx/backgrounds/ui/play_button.aseprite",
 );
 
 // System Constants
 const TILE_PIXEL_SIZE: i32 = 8;
+const DISPLAY_TILE_WIDTH: i32 = display::WIDTH / TILE_PIXEL_SIZE;
+const DISPLAY_TILE_HEIGHT: i32 = display::HEIGHT / TILE_PIXEL_SIZE;
 
-// Battlefield constants
+// Battlefield Constants
 const BATTLEFIELD_TILE_SIZE: i32 = 2;
 const BATTLEFIELD_PIXEL_SIZE: i32 = BATTLEFIELD_TILE_SIZE * TILE_PIXEL_SIZE;
-const BATTLEFIELD_WIDTH: i32 = display::WIDTH / BATTLEFIELD_PIXEL_SIZE;
-const BATTLEFIELD_HEIGHT: i32 = display::HEIGHT / BATTLEFIELD_PIXEL_SIZE;
+const BATTLEFIELD_WIDTH: i32 = DISPLAY_TILE_WIDTH / BATTLEFIELD_TILE_SIZE;
+const BATTLEFIELD_X_MIDPOINT: i32 = BATTLEFIELD_WIDTH / 2;
+const BATTLEFIELD_HEIGHT: i32 = DISPLAY_TILE_HEIGHT / BATTLEFIELD_TILE_SIZE;
+// const BATTLEFIELD_Y_MIDPOINT: i32 = BATTLEFIELD_HEIGHT / 2;
 const BATTLEFIELD_IDX_BOUNDS: Rect<i32> = Rect::new(
     vec2(0, 0),
     vec2(BATTLEFIELD_WIDTH - 1, BATTLEFIELD_HEIGHT - 1),
 );
+
+// UI Constants
+const MENU_LEFT_X: i32 = 0;
+const MENU_RIGHT_X: i32 = DISPLAY_TILE_WIDTH - backgrounds::MENU_HEADER.width as i32;
+const MENU_Y: i32 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BattlefieldTileType {
@@ -71,15 +77,21 @@ pub enum BattlefieldTileType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum MenuState {
+pub enum MenuState {
     Closed,
-    Open(MenuType),
+    Open(MenuType, MenuSide),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum MenuType {
+pub enum MenuType {
     EmptyTile,
     OccupiedTile,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MenuSide {
+    Left,
+    Right,
 }
 
 pub fn main(mut gba: agb::Gba) -> ! {
@@ -113,7 +125,7 @@ pub fn main(mut gba: agb::Gba) -> ! {
     // Fill the battlefield with grass
     for x in 0..BATTLEFIELD_WIDTH as usize {
         for y in 0..BATTLEFIELD_HEIGHT as usize {
-            gfx::set_battlefield_tile(
+            set_battlefield_tile(
                 &mut battlefield_background,
                 vec2(x as i32, y as i32),
                 battlefield[x][y],
@@ -162,21 +174,70 @@ pub fn main(mut gba: agb::Gba) -> ! {
 
                 // If A is pressed, open the menu
                 if input.is_just_released(Button::A) {
-                    if battlefield[battlefield_cursor_pos.x as usize][battlefield_cursor_pos.y as usize] == BattlefieldTileType::Empty {
-                        menu_state = MenuState::Open(MenuType::EmptyTile);
-                    } else {
-                        menu_state = MenuState::Open(MenuType::OccupiedTile)
-                    }
+                    // Open the menu
+                    let menu_type = match battlefield[battlefield_cursor_pos.x as usize]
+                        [battlefield_cursor_pos.y as usize]
+                    {
+                        BattlefieldTileType::Empty => MenuType::EmptyTile,
+                        _ => MenuType::OccupiedTile,
+                    };
+                    // Menu goes on the opposite side of the selected building
+                    let menu_side = match battlefield_cursor_pos.x {
+                        0..BATTLEFIELD_X_MIDPOINT => MenuSide::Right,
+                        _ => MenuSide::Left,
+                    };
+                    menu_state = MenuState::Open(menu_type, menu_side);
+                    // Display the menu
+                    let menu_pos = (
+                        match menu_side {
+                            MenuSide::Left => MENU_LEFT_X,
+                            MenuSide::Right => MENU_RIGHT_X,
+                        },
+                        MENU_Y,
+                    )
+                        .into();
+                    draw_many_tile_data(
+                        &mut ui_background,
+                        menu_pos,
+                        &vec![
+                            &backgrounds::MENU_HEADER,
+                            &backgrounds::MENU_BUILD,
+                            &backgrounds::MENU_INFO,
+                            &backgrounds::MENU_FOOTER,
+                        ],
+                    );
+                    // Move the cursor
+                    cursor_highlight.set_target(
+                        ((menu_pos + vec2(0, backgrounds::MENU_HEADER.height as i32))
+                            * TILE_PIXEL_SIZE)
+                            + vec2(1, 0),
+                        (vec2(
+                            backgrounds::MENU_BUILD.width as i32,
+                            (backgrounds::MENU_BUILD.height) as i32,
+                        ) * TILE_PIXEL_SIZE)
+                            - vec2(2, 0),
+                    );
+                    // Draw the battlefield tile on the ui layer
+                    // TO-DO: get the actual tile; just drawing grass for now to get the visual down.
+                    set_battlefield_tile(&mut ui_background, battlefield_cursor_pos, BattlefieldTileType::Empty);
                 }
             }
             // If the menu is open, controls navigate the cursor around the menu
-            MenuState::Open(menu_type) => {
-                // TO-DO draw the menu or somethink idfk it's late...
+            MenuState::Open(menu_type, menu_side) => {
+                // B button closes menu
+                if input.is_just_released(Button::B) {
+                    menu_state = MenuState::Closed;
+                    blank_background(&mut ui_background, &backgrounds::MENU_HEADER);
+                }
+
             }
         }
 
         // Show the backgrounds
-        battlefield_background.show(&mut frame);
+        let battlefield_background_id = battlefield_background.show(&mut frame);
+        if let MenuState::Open(..) = menu_state {
+            frame.blend().darken(Num::from_f32(0.5)).enable_background(battlefield_background_id).enable_backdrop();
+        }
         ui_background.show(&mut frame);
 
         // move the cursor and show it
