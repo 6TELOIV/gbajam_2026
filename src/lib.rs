@@ -65,9 +65,9 @@ const BATTLEFIELD_IDX_BOUNDS: Rect<i32> = Rect::new(
 );
 
 // UI Constants
-const MENU_LEFT_X: i32 = 0;
-const MENU_RIGHT_X: i32 = DISPLAY_TILE_WIDTH - backgrounds::MENU_HEADER.width as i32;
-const MENU_Y: i32 = 3;
+const MENU_LEFT_X: i32 = 1;
+const MENU_RIGHT_X: i32 = DISPLAY_TILE_WIDTH - backgrounds::MENU_HEADER.width as i32 - 1;
+const MENU_Y: i32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BattlefieldTileType {
